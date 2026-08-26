@@ -98,6 +98,17 @@
             cursor: pointer
         }
 
+        button.danger {
+            background: #b42318;
+            color: white;
+            border: 0;
+            border-radius: 12px;
+            padding: 13px 17px;
+            font-weight: 800;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
         input {
             width: 100%;
             padding: 12px;
@@ -153,6 +164,60 @@
             color: #667085;
             font-size: 14px
         }
+
+        .guest-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            align-items: end;
+            margin-bottom: 20px;
+        }
+
+        .guest-form label {
+            display: block;
+            font-size: 13px;
+            font-weight: 700;
+            color: #475467;
+            margin-bottom: 6px;
+        }
+
+        .guest-form select,
+        .guest-form input {
+            margin: 0;
+        }
+
+        .guest-card {
+            display: flex;
+            gap: 18px;
+            align-items: center;
+            flex-wrap: wrap;
+            padding: 18px 0;
+            border-top: 1px solid #eef1f4;
+        }
+
+        .guest-info {
+            flex: 1;
+            min-width: 180px;
+        }
+
+        .guest-info h3,
+        .guest-info p {
+            margin: 4px 0;
+        }
+
+        .sync-status {
+            margin: 0 0 18px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: #ecfdf3;
+            color: #027a48;
+            font-size: 14px;
+        }
+
+        .sync-status.error {
+            background: #fef3f2;
+            color: #b42318;
+        }
     </style>
 </head>
 
@@ -162,6 +227,7 @@
             <h1>EventPass</h1>
             <div>QR invitation & secure guest check-in</div>
         </div>
+        <p id="syncStatus" class="sync-status">Connecting to shared event data...</p>
         <div class="tabs"><button class="tab active" onclick="show('checkin',this)">Scanner</button><button class="tab"
                 onclick="show('guests',this)">Guests</button><button class="tab"
                 onclick="show('dashboard',this)">Dashboard</button></div>
@@ -175,7 +241,26 @@
         </section>
         <section id="guests" class="hidden">
             <div class="card">
-                <h2>Guest QR generator</h2>
+                <h2>Add guest</h2>
+                <form id="guestForm" onsubmit="event.preventDefault(); addGuest();">
+                    <div class="guest-form">
+                        <div>
+                            <label for="guestName">Guest name</label>
+                            <input id="guestName" type="text" placeholder="Enter guest name" required>
+                        </div>
+                        <div>
+                            <label for="guestGender">Profile illustration</label>
+                            <select id="guestGender">
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                            </select>
+                        </div>
+                        <div>
+                            <button class="primary" type="submit">Add Guest</button>
+                        </div>
+                    </div>
+                </form>
+                <h3>Guest QR generator</h3>
                 <p class="small">Demo data is included. Replace it with your 100 guests when the database is connected.
                 </p>
                 <div id="guestList"></div>
@@ -196,41 +281,215 @@
             </div>
         </section>
     </div>
-    <script>const seed = [{ id: 'EVT001', name: 'John Ade', photo: 'https://i.pravatar.cc/300?img=12' }, { id: 'EVT002', name: 'Mary James', photo: 'https://i.pravatar.cc/300?img=47' }, { id: 'EVT003', name: 'David Olu', photo: 'https://i.pravatar.cc/300?img=11' }]; let guests = JSON.parse(localStorage.getItem('eventGuests') || 'null') || seed.map(g => ({ ...g, token: crypto.randomUUID(), checkedIn: false, checkedAt: null })); function save() { localStorage.setItem('eventGuests', JSON.stringify(guests)); update() } function show(id, btn) { document.querySelectorAll('section').forEach(x => x.classList.add('hidden')); document.getElementById(id).classList.remove('hidden'); document.querySelectorAll('.tab').forEach(x => x.classList.remove('active')); btn.classList.add('active'); if (id === 'guests') renderGuests(); if (id === 'dashboard') update() } function renderGuests() {
-    document.getElementById('guestList').innerHTML = guests.map(g => `
-        <div class="card">
-            <div class="row">
-                <img class="guestphoto" src="${g.photo}" alt="">
-                <div>
-                    <h3>${g.name}</h3>
-                    <div>${g.id}</div>
-                    <div class="qr" id="qr-${g.id}"></div>
-                    <div>
-                        <button class="primary" onclick="downloadQR('${g.id}')">
-                            Download QR
-                        </button>
-                    </div>
-                </div>
-            </div>
+    <script>const SUPABASE_URL = 'https://otherwvwvlwwjmlsyhpb.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_FILPYr1dli7WLc37fFK7KA_ju8Q9yj1';
+const SUPABASE_TABLE = 'guests';
+const SCANNER_MODE = new URLSearchParams(window.location.search).get('scanner') === '1';
+
+const seed = [
+  { id: 'EVT001', name: 'John Ade', gender: 'male' },
+  { id: 'EVT002', name: 'Mary James', gender: 'female' },
+  { id: 'EVT003', name: 'David Olu', gender: 'male' }
+];
+
+function getProfileImage(gender) {
+  if (gender === 'female') {
+    return 'https://cdn-icons-png.flaticon.com/512/6997/6997662.png';
+  }
+
+  return 'https://cdn-icons-png.flaticon.com/512/6997/6997674.png';
+}
+
+let guests = [];
+
+function localSeed() {
+    return seed.map(g => ({
+    ...g,
+    photo: getProfileImage(g.gender),
+    token: crypto.randomUUID(),
+    checkedIn: false,
+    checkedAt: null
+    }));
+}
+
+function setSyncStatus(message, isError = false) {
+    const status = document.getElementById('syncStatus');
+    status.textContent = message;
+    status.classList.toggle('error', isError);
+}
+
+async function supabaseRequest(path = '', options = {}) {
+    const response = await fetch(SUPABASE_URL + '/rest/v1/' + SUPABASE_TABLE + path, {
+        ...options,
+        headers: {
+            apikey: SUPABASE_KEY,
+            Authorization: 'Bearer ' + SUPABASE_KEY,
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+        }
+    });
+
+    if (!response.ok) throw new Error(await response.text());
+    if (response.status === 204 || response.status === 201) return null;
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+}
+
+function fromDatabase(row) {
+    return {
+        id: row.id,
+        name: row.name,
+        gender: row.gender || 'male',
+        photo: row.photo,
+        token: row.token,
+        checkedIn: row.checked_in,
+        checkedAt: row.checked_at
+    };
+}
+
+async function loadGuests() {
+    try {
+        const rows = await supabaseRequest('?select=*&order=id.asc');
+        guests = rows.map(fromDatabase);
+        setSyncStatus('Connected to shared event data.');
+    } catch (error) {
+        guests = JSON.parse(localStorage.getItem('eventGuests') || 'null') || localSeed();
+        setSyncStatus('Shared database is not ready. Run supabase-setup.sql, then reload.', true);
+        console.error('Supabase load failed:', error);
+    }
+
+    update();
+    if (!SCANNER_MODE) renderGuests();
+}
+
+async function saveGuest(guest) {
+    await supabaseRequest('', {
+        method: 'POST',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+            id: guest.id,
+            name: guest.name,
+            gender: guest.gender,
+            photo: guest.photo,
+            token: guest.token,
+            checked_in: guest.checkedIn,
+            checked_at: guest.checkedAt
+        })
+    });
+}
+
+function show(id, btn) { document.querySelectorAll('section').forEach(x => x.classList.add('hidden')); document.getElementById(id).classList.remove('hidden'); document.querySelectorAll('.tab').forEach(x => x.classList.remove('active')); btn.classList.add('active'); if (id === 'guests') renderGuests(); if (id === 'dashboard') update() } async function addGuest() {
+    const nameInput = document.getElementById('guestName');
+    const genderInput = document.getElementById('guestGender');
+    const name = (nameInput.value || '').trim();
+    const gender = genderInput.value || 'male';
+
+    if (!name) return;
+
+    const nextNumber = guests.reduce((highest, guest) => {
+        const number = Number.parseInt(guest.id.replace('EVT', ''), 10);
+        return Number.isNaN(number) ? highest : Math.max(highest, number);
+    }, 0) + 1;
+    const nextId = 'EVT' + String(nextNumber).padStart(3, '0');
+
+    const guest = {
+        id: nextId,
+        name,
+        gender,
+        photo: getProfileImage(gender),
+        token: crypto.randomUUID(),
+        checkedIn: false,
+        checkedAt: null
+    };
+
+    try {
+        await saveGuest(guest);
+        guests.push(guest);
+        nameInput.value = '';
+        genderInput.value = 'male';
+        setSyncStatus('Guest added and shared with all devices.');
+        update();
+        renderGuests();
+    } catch (error) {
+        setSyncStatus('Could not add guest. Check the Supabase table setup.', true);
+        console.error('Supabase add failed:', error);
+    }
+} function renderGuests() {
+  const container = document.getElementById('guestList');
+  if (!container) return;
+
+  container.innerHTML = guests.map(g => {
+    const gender = g.gender || 'male';
+
+    const avatar = g.photo || (gender === 'female'
+      ? 'https://api.dicebear.com/9.x/personas/svg?seed=female-' + encodeURIComponent(g.name)
+      : 'https://api.dicebear.com/9.x/personas/svg?seed=male-' + encodeURIComponent(g.name));
+
+    return `
+      <div class="guest-card">
+        <img
+          src="${avatar}"
+          alt="${gender === 'female' ? 'Female' : 'Male'} profile illustration"
+          style="
+            width:90px;
+            height:90px;
+            border-radius:50%;
+            object-fit:cover;
+            background:#f1f5f9;
+          "
+        >
+
+        <div class="guest-info">
+          <h3>${g.name}</h3>
+          <p>${g.id}</p>
+          <p>
+            ${g.checkedIn
+              ? '✅ Checked in'
+              : '⏳ Not checked in'}
+          </p>
         </div>
-    `).join('');
+
+                <div>
+                    <div class="qr" id="qr-${g.id}"></div>
+                    <button class="primary" onclick="downloadQR('${g.id}')">Download QR</button>
+                    <button class="danger" onclick="removeGuest('${g.id}')">Remove guest</button>
+                </div>
+      </div>
+    `;
+  }).join('');
 
     setTimeout(() => {
         guests.forEach(g => {
-            const container = document.getElementById('qr-' + g.id);
+            const qrContainer = document.getElementById('qr-' + g.id);
 
-            if (!container) return;
+            if (!qrContainer || typeof QRCode === 'undefined') return;
 
-            container.innerHTML = '';
-
-            new QRCode(container, {
+            qrContainer.innerHTML = '';
+            new QRCode(qrContainer, {
                 text: 'eventpass://' + g.token,
-                width: 220,
-                height: 220,
+                width: 180,
+                height: 180,
                 correctLevel: QRCode.CorrectLevel.H
             });
         });
-    }, 100);
+    }, 0);
+} function removeGuest(id) {
+    const guest = guests.find(item => item.id === id);
+
+    if (!guest || !confirm('Remove ' + guest.name + ' from the guest list?')) return;
+
+    supabaseRequest('?id=eq.' + encodeURIComponent(id), {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' }
+    }).then(() => {
+        guests = guests.filter(item => item.id !== id);
+        setSyncStatus('Guest removed from all devices.');
+        update();
+        renderGuests();
+    }).catch(error => {
+        setSyncStatus('Could not remove guest. Check your connection.', true);
+        console.error('Supabase remove failed:', error);
+    });
 } function downloadQR(id) {
     const source = document.querySelector('#qr-' + id + ' canvas');
 
@@ -265,7 +524,7 @@
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }, 'image/png');
-} function verify(raw) { const token = raw.replace('eventpass://', '').trim(); const g = guests.find(x => x.token === token || x.id === token); const r = document.getElementById('result'); if (!g) { r.innerHTML = '<div class="result invalid"><h2>❌ INVALID INVITATION</h2><p>This QR code is not registered for this event.</p></div>'; return } if (g.checkedIn) { r.innerHTML = `<div class="result invalid"><div class="row"><img class="guestphoto" src="${g.photo}"><div><h2>⚠️ ALREADY CHECKED IN</h2><h3>${g.name}</h3><p>Guest ID: ${g.id}</p><p>Checked in: ${new Date(g.checkedAt).toLocaleString()}</p></div></div></div>`; return } r.innerHTML = `<div class="result valid"><div class="row"><img class="guestphoto" src="${g.photo}"><div><h2>✅ VALID INVITATION</h2><h3>${g.name}</h3><p>Guest ID: ${g.id}</p><button class="primary" onclick="checkin('${g.id}')">ALLOW ENTRY / CHECK IN</button></div></div></div>` } function checkin(id) { const g = guests.find(x => x.id === id); if (!g) return; g.checkedIn = true; g.checkedAt = new Date().toISOString(); save(); verify(g.token) } function update() { const checked = guests.filter(g => g.checkedIn); document.getElementById('total').textContent = guests.length; document.getElementById('checked').textContent = checked.length; document.getElementById('remaining').textContent = guests.length - checked.length; document.getElementById('recent').innerHTML = checked.slice(-10).reverse().map(g => `<p><b>${g.name}</b> — ${new Date(g.checkedAt).toLocaleString()}</p>`).join('') || '<p class="small">No check-ins yet.</p>' } window.addEventListener('load', () => { update(); if (window.Html5Qrcode) { const scanner = new Html5Qrcode('reader'); scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 250, height: 250 } }, text => { verify(text) }, () => { }).catch(e => document.getElementById('reader').innerHTML = '<p class="small">Camera could not start. Allow camera permission and reload.</p>') } });</script>
+} function verify(raw) { const token = raw.replace('eventpass://', '').trim(); const g = guests.find(x => x.token === token || x.id === token); const r = document.getElementById('result'); if (!g) { r.innerHTML = '<div class="result invalid"><h2>❌ INVALID INVITATION</h2><p>This QR code is not registered for this event.</p></div>'; return } if (g.checkedIn) { r.innerHTML = `<div class="result invalid"><div class="row"><img class="guestphoto" src="${g.photo}"><div><h2>⚠️ ALREADY CHECKED IN</h2><h3>${g.name}</h3><p>Guest ID: ${g.id}</p><p>Checked in: ${new Date(g.checkedAt).toLocaleString()}</p></div></div></div>`; return } r.innerHTML = `<div class="result valid"><div class="row"><img class="guestphoto" src="${g.photo}"><div><h2>✅ VALID INVITATION</h2><h3>${g.name}</h3><p>Guest ID: ${g.id}</p><button class="primary" onclick="checkin('${g.id}')">ALLOW ENTRY / CHECK IN</button></div></div></div>` } async function checkin(id) { const g = guests.find(x => x.id === id); if (!g) return; const checkedAt = new Date().toISOString(); try { const rows = await supabaseRequest('?id=eq.' + encodeURIComponent(id) + '&checked_in=eq.false', { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ checked_in: true, checked_at: checkedAt }) }); if (!rows.length) { await loadGuests(); verify(id); return; } g.checkedIn = true; g.checkedAt = checkedAt; setSyncStatus('Check-in synced to all devices.'); update(); verify(g.token); } catch (error) { setSyncStatus('Could not sync check-in. Check your connection.', true); console.error('Supabase check-in failed:', error); } } function update() { const checked = guests.filter(g => g.checkedIn); document.getElementById('total').textContent = guests.length; document.getElementById('checked').textContent = checked.length; document.getElementById('remaining').textContent = guests.length - checked.length; document.getElementById('recent').innerHTML = checked.slice(-10).reverse().map(g => `<p><b>${g.name}</b> — ${new Date(g.checkedAt).toLocaleString()}</p>`).join('') || '<p class="small">No check-ins yet.</p>' } async function refreshSharedGuests() { if (!guests.length && !SCANNER_MODE) return; try { const rows = await supabaseRequest('?select=*&order=id.asc'); guests = rows.map(fromDatabase); update(); if (!SCANNER_MODE && !document.getElementById('guests').classList.contains('hidden')) renderGuests(); } catch (error) { console.error('Supabase refresh failed:', error); } } async function startApp() { if (SCANNER_MODE) { document.querySelector('.tabs').classList.add('hidden'); document.getElementById('guests').classList.add('hidden'); document.getElementById('dashboard').classList.add('hidden'); } await loadGuests(); if (window.Html5Qrcode) { const scanner = new Html5Qrcode('reader'); scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 250, height: 250 } }, text => { verify(text) }, () => { }).catch(e => document.getElementById('reader').innerHTML = '<p class="small">Camera could not start. Allow camera permission and reload.</p>') } setInterval(refreshSharedGuests, 3000); } window.addEventListener('load', startApp);</script>
 </body>
 
 </html>
