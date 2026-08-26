@@ -301,6 +301,7 @@ function getProfileImage(gender) {
 }
 
 let guests = [];
+let renderedGuestSignature = '';
 
 function localSeed() {
     return seed.map(g => ({
@@ -414,9 +415,22 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
         setSyncStatus('Could not add guest. Check the Supabase table setup.', true);
         console.error('Supabase add failed:', error);
     }
-} function renderGuests() {
+} function renderGuests(force = false) {
   const container = document.getElementById('guestList');
   if (!container) return;
+
+    const guestSignature = JSON.stringify(guests.map(guest => ({
+        id: guest.id,
+        name: guest.name,
+        gender: guest.gender,
+        photo: guest.photo,
+        token: guest.token,
+        checkedIn: guest.checkedIn,
+        checkedAt: guest.checkedAt
+    })));
+
+    if (!force && guestSignature === renderedGuestSignature) return;
+    renderedGuestSignature = guestSignature;
 
   container.innerHTML = guests.map(g => {
     const gender = g.gender || 'male';
@@ -458,7 +472,7 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
     `;
   }).join('');
 
-    setTimeout(() => {
+    requestAnimationFrame(() => {
         guests.forEach(g => {
             const qrContainer = document.getElementById('qr-' + g.id);
 
