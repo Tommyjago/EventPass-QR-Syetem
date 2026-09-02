@@ -15,7 +15,7 @@
         body {
             margin: 0;
             font-family: Inter, system-ui, -apple-system, sans-serif;
-            background: #f4f6f8;
+            background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
             color: #17202a
         }
 
@@ -26,16 +26,17 @@
         }
 
         .hero {
-            background: #111827;
+            background: linear-gradient(135deg, #111827, #1f2937);
             color: white;
             border-radius: 24px;
             padding: 28px;
-            margin-bottom: 18px
+            margin-bottom: 18px;
+            box-shadow: 0 12px 30px rgba(17, 24, 39, 0.12)
         }
 
         .hero h1 {
             margin: 0 0 6px;
-            font-size: 30px
+            font-size: clamp(28px, 4vw, 38px)
         }
 
         .tabs {
@@ -46,12 +47,18 @@
         }
 
         .tab {
-            border: 0;
+            border: 1px solid transparent;
             border-radius: 12px;
             padding: 12px 16px;
-            background: white;
+            background: rgba(255,255,255,0.8);
             cursor: pointer;
-            font-weight: 700
+            font-weight: 700;
+            transition: all 0.18s ease
+        }
+
+        .tab:hover {
+            border-color: #d5dbe1;
+            transform: translateY(-1px)
         }
 
         .tab.active {
@@ -60,10 +67,11 @@
         }
 
         .card {
-            background: white;
+            background: rgba(255,255,255,0.96);
+            border: 1px solid #edf1f6;
             border-radius: 18px;
             padding: 20px;
-            box-shadow: 0 6px 25px #0000000d;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
             margin-bottom: 18px
         }
 
@@ -95,7 +103,13 @@
             border-radius: 12px;
             padding: 13px 17px;
             font-weight: 800;
-            cursor: pointer
+            cursor: pointer;
+            transition: opacity 0.18s ease, transform 0.18s ease
+        }
+
+        button.primary:hover {
+            opacity: 0.94;
+            transform: translateY(-1px)
         }
 
         button.danger {
@@ -158,6 +172,15 @@
             padding: 20px;
             background: #ffffff;
             margin: 12px 0;
+            border: 1px solid #edf1f6;
+            border-radius: 12px
+        }
+
+        #reader video,
+        #reader canvas,
+        .guest-card img {
+            max-width: 100%;
+            display: block
         }
 
         .small {
@@ -193,6 +216,11 @@
             flex-wrap: wrap;
             padding: 18px 0;
             border-top: 1px solid #eef1f4;
+            transition: background 0.18s ease
+        }
+
+        .guest-card:hover {
+            background: rgba(148, 163, 184, 0.02)
         }
 
         .guest-info {
@@ -332,6 +360,17 @@ const seed = [
   { id: 'EVT003', name: 'David Olu', gender: 'male' }
 ];
 
+function createQrCode(container, guestToken) {
+    if (!container || typeof QRCode === 'undefined') return;
+    container.innerHTML = '';
+    new QRCode(container, {
+        text: 'eventpass://' + guestToken,
+        width: 180,
+        height: 180,
+        correctLevel: QRCode.CorrectLevel.H
+    });
+}
+
 function getProfileImage(gender) {
   if (gender === 'female') {
     return 'https://cdn-icons-png.flaticon.com/512/6997/6997662.png';
@@ -462,6 +501,21 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
     }))));
 }
 
+function scheduleQrGeneration(filteredGuests) {
+    const renderQr = () => {
+        filteredGuests.forEach(g => {
+            const qrContainer = document.getElementById('qr-' + g.id);
+            if (qrContainer) createQrCode(qrContainer, g.token);
+        });
+    };
+
+    if ('requestIdleCallback' in window) {
+        requestIdleCallback(renderQr, { timeout: 250 });
+    } else {
+        setTimeout(renderQr, 25);
+    }
+}
+
 function renderGuests(force = false) {
   const container = document.getElementById('guestList');
   if (!container) return;
@@ -488,14 +542,13 @@ function renderGuests(force = false) {
 
   container.innerHTML = filteredGuests.length ? filteredGuests.map(g => {
     const gender = g.gender || 'male';
-
     const avatar = g.photo || (gender === 'female'
       ? 'https://api.dicebear.com/9.x/personas/svg?seed=female-' + encodeURIComponent(g.name)
       : 'https://api.dicebear.com/9.x/personas/svg?seed=male-' + encodeURIComponent(g.name));
 
     return `
       <div class="guest-card">
-        <img
+        <img loading="lazy"
           src="${avatar}"
           alt="${gender === 'female' ? 'Female' : 'Male'} profile illustration"
           style="
@@ -510,37 +563,19 @@ function renderGuests(force = false) {
         <div class="guest-info">
           <h3>${g.name}</h3>
           <p>${g.id}</p>
-          <p>
-            ${g.checkedIn
-              ? '✅ Checked in'
-              : '⏳ Not checked in'}
-          </p>
+          <p>${g.checkedIn ? '✅ Checked in' : '⏳ Not checked in'}</p>
         </div>
 
-                <div>
-                    <div class="qr" id="qr-${g.id}"></div>
-                    <button class="primary" onclick="downloadQR('${g.id}')">Download QR</button>
-                    <button class="danger" onclick="removeGuest('${g.id}')">Remove guest</button>
-                </div>
+        <div>
+          <div class="qr" id="qr-${g.id}"></div>
+          <button class="primary" onclick="downloadQR('${g.id}')">Download QR</button>
+          <button class="danger" onclick="removeGuest('${g.id}')">Remove guest</button>
+        </div>
       </div>
     `;
   }).join('') : '<p class="small">No guests match your search.</p>';
 
-    requestAnimationFrame(() => {
-        filteredGuests.forEach(g => {
-            const qrContainer = document.getElementById('qr-' + g.id);
-
-            if (!qrContainer || typeof QRCode === 'undefined') return;
-
-            qrContainer.innerHTML = '';
-            new QRCode(qrContainer, {
-                text: 'eventpass://' + g.token,
-                width: 180,
-                height: 180,
-                correctLevel: QRCode.CorrectLevel.H
-            });
-        });
-    }, 0);
+    scheduleQrGeneration(filteredGuests);
 }
 
 function clearDashboardActivities() {
