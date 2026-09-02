@@ -289,6 +289,8 @@
                     </div>
                 </form>
                 <h3>Guest QR generator</h3>
+                <label for="guestSearch" class="small">Search guests by name or ID</label>
+                <input id="guestSearch" class="dashboard-search" type="search" placeholder="Find guest" oninput="renderGuests(true)">
                 <p class="small">Demo data is included. Replace it with your 100 guests when the database is connected.
                 </p>
                 <div id="guestList"></div>
@@ -311,7 +313,10 @@
                 <div id="validatedGuests"></div>
             </div>
             <div class="card">
-                <h3>All activity</h3>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                    <h3 style="margin:0;">All activity</h3>
+                    <button class="primary" type="button" onclick="clearDashboardActivities()">Clear activity</button>
+                </div>
                 <div id="activity" class="activity-list"></div>
             </div>
         </section>
@@ -450,11 +455,25 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
         setSyncStatus('Could not add guest. Check the Supabase table setup.', true);
         console.error('Supabase add failed:', error);
     }
-} function renderGuests(force = false) {
+} function persistGuests() {
+    localStorage.setItem('eventGuests', JSON.stringify(guests.map(guest => ({
+        ...guest,
+        photo: guest.photo || getProfileImage(guest.gender || 'male')
+    }))));
+}
+
+function renderGuests(force = false) {
   const container = document.getElementById('guestList');
   if (!container) return;
 
-    const guestSignature = JSON.stringify(guests.map(guest => ({
+    const searchInput = document.getElementById('guestSearch');
+    const searchTerm = (searchInput ? searchInput.value : '').trim().toLowerCase();
+    const filteredGuests = guests.filter(guest => {
+        if (!searchTerm) return true;
+        return guest.name.toLowerCase().includes(searchTerm) || guest.id.toLowerCase().includes(searchTerm);
+    });
+
+    const guestSignature = JSON.stringify(filteredGuests.map(guest => ({
         id: guest.id,
         name: guest.name,
         gender: guest.gender,
@@ -462,12 +481,12 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
         token: guest.token,
         checkedIn: guest.checkedIn,
         checkedAt: guest.checkedAt
-    })));
+    }))) + '|' + searchTerm;
 
     if (!force && guestSignature === renderedGuestSignature) return;
     renderedGuestSignature = guestSignature;
 
-  container.innerHTML = guests.map(g => {
+  container.innerHTML = filteredGuests.length ? filteredGuests.map(g => {
     const gender = g.gender || 'male';
 
     const avatar = g.photo || (gender === 'female'
@@ -505,10 +524,10 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
                 </div>
       </div>
     `;
-  }).join('');
+  }).join('') : '<p class="small">No guests match your search.</p>';
 
     requestAnimationFrame(() => {
-        guests.forEach(g => {
+        filteredGuests.forEach(g => {
             const qrContainer = document.getElementById('qr-' + g.id);
 
             if (!qrContainer || typeof QRCode === 'undefined') return;
@@ -522,7 +541,35 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
             });
         });
     }, 0);
-} function removeGuest(id) {
+}
+
+function clearDashboardActivities() {
+    if (!guests.length) return;
+    if (!confirm('Clear all check-in activity and reset the dashboard?')) return;
+
+    const resetGuests = guests.map(guest => ({ ...guest, checkedIn: false, checkedAt: null }));
+
+    guests = resetGuests;
+    persistGuests();
+
+    const resetGuestRows = guests.map(guest =>
+        supabaseRequest('?id=eq.' + encodeURIComponent(guest.id), {
+            method: 'PATCH',
+            headers: { Prefer: 'return=minimal' },
+            body: JSON.stringify({ checked_in: false, checked_at: null })
+        }).catch(error => {
+            console.error('Could not reset guest row:', error);
+        })
+    );
+
+    Promise.all(resetGuestRows).finally(() => {
+        setSyncStatus('Event activity cleared.');
+        update();
+        renderGuests(true);
+    });
+}
+
+function removeGuest(id) {
     const guest = guests.find(item => item.id === id);
 
     if (!guest || !confirm('Remove ' + guest.name + ' from the guest list?')) return;
@@ -608,6 +655,11 @@ function show(id, btn) { document.querySelectorAll('section').forEach(x => x.cla
             document.getElementById('remaining').textContent = guests.length - checked.length;
             updateDashboard();
         };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const guestSearch = document.getElementById('guestSearch');
+            if (guestSearch) guestSearch.value = '';
+        });
     </script>
 </body>
 
