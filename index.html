@@ -269,6 +269,11 @@
             margin: 3px 0;
         }
 
+        .remaining-list {
+            max-height: 520px;
+            overflow-y: auto;
+        }
+
         @media (max-width: 600px) {
             .activity-item {
                 display: block;
@@ -339,6 +344,13 @@
                 <input id="validatedSearch" class="dashboard-search" type="search"
                     placeholder="Search validated guests" oninput="updateDashboard()">
                 <div id="validatedGuests"></div>
+            </div>
+            <div class="card">
+                <h3>Remaining guests</h3>
+                <label for="remainingSearch" class="small">Search by guest name or ID</label>
+                <input id="remainingSearch" class="dashboard-search" type="search"
+                    placeholder="Search remaining guests" oninput="updateDashboard()">
+                <div id="remainingGuests" class="remaining-list"></div>
             </div>
             <div class="card">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
@@ -658,21 +670,35 @@ function removeGuest(id) {
 } function verify(raw) { const token = raw.replace('eventpass://', '').trim(); const g = guests.find(x => x.token === token || x.id === token); const r = document.getElementById('result'); if (!g) { r.innerHTML = '<div class="result invalid"><h2>❌ INVALID INVITATION</h2><p>This QR code is not registered for this event.</p></div>'; return } if (g.checkedIn) { r.innerHTML = `<div class="result invalid"><div class="row"><img class="guestphoto" src="${g.photo}"><div><h2>⚠️ ALREADY CHECKED IN</h2><h3>${g.name}</h3><p>Guest ID: ${g.id}</p><p>Checked in: ${new Date(g.checkedAt).toLocaleString()}</p></div></div></div>`; return } r.innerHTML = `<div class="result valid"><div class="row"><img class="guestphoto" src="${g.photo}"><div><h2>✅ VALID INVITATION</h2><h3>${g.name}</h3><p>Guest ID: ${g.id}</p><button class="primary" onclick="checkin('${g.id}')">ALLOW ENTRY / CHECK IN</button></div></div></div>` } async function checkin(id) { const g = guests.find(x => x.id === id); if (!g) return; const checkedAt = new Date().toISOString(); try { const rows = await supabaseRequest('?id=eq.' + encodeURIComponent(id) + '&checked_in=eq.false', { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ checked_in: true, checked_at: checkedAt }) }); if (!rows.length) { await loadGuests(); verify(id); return; } g.checkedIn = true; g.checkedAt = checkedAt; setSyncStatus('Check-in synced to all devices.'); update(); verify(g.token); } catch (error) { setSyncStatus('Could not sync check-in. Check your connection.', true); console.error('Supabase check-in failed:', error); } } function update() { const checked = guests.filter(g => g.checkedIn); document.getElementById('total').textContent = guests.length; document.getElementById('checked').textContent = checked.length; document.getElementById('remaining').textContent = guests.length - checked.length; document.getElementById('recent').innerHTML = checked.slice(-10).reverse().map(g => `<p><b>${g.name}</b> — ${new Date(g.checkedAt).toLocaleString()}</p>`).join('') || '<p class="small">No check-ins yet.</p>' } async function refreshSharedGuests() { if (!guests.length && !SCANNER_MODE) return; try { const rows = await supabaseRequest('?select=*&order=id.asc'); guests = rows.map(fromDatabase); update(); if (!SCANNER_MODE && !document.getElementById('guests').classList.contains('hidden')) renderGuests(); } catch (error) { console.error('Supabase refresh failed:', error); } } async function startApp() { if (SCANNER_MODE) { document.querySelector('.tabs').classList.add('hidden'); document.getElementById('guests').classList.add('hidden'); document.getElementById('dashboard').classList.add('hidden'); } await loadGuests(); if (window.Html5Qrcode) { const scanner = new Html5Qrcode('reader'); scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 250, height: 250 } }, text => { verify(text) }, () => { }).catch(e => document.getElementById('reader').innerHTML = '<p class="small">Camera could not start. Allow camera permission and reload.</p>') } setInterval(refreshSharedGuests, 3000); } window.addEventListener('load', startApp);</script>
     <script>
         function updateDashboard() {
-            const searchInput = document.getElementById('validatedSearch');
-            const searchTerm = (searchInput ? searchInput.value : '').trim().toLowerCase();
+            const validatedSearchInput = document.getElementById('validatedSearch');
+            const remainingSearchInput = document.getElementById('remainingSearch');
+            const validatedSearchTerm = (validatedSearchInput ? validatedSearchInput.value : '').trim().toLowerCase();
+            const remainingSearchTerm = (remainingSearchInput ? remainingSearchInput.value : '').trim().toLowerCase();
             const validated = guests.filter(guest => guest.checkedIn);
-            const matchingGuests = validated.filter(guest => {
-                return !searchTerm || guest.name.toLowerCase().includes(searchTerm) || guest.id.toLowerCase().includes(searchTerm);
+            const remaining = guests.filter(guest => !guest.checkedIn);
+            const matchingValidatedGuests = validated.filter(guest => {
+                return !validatedSearchTerm || guest.name.toLowerCase().includes(validatedSearchTerm) || guest.id.toLowerCase().includes(validatedSearchTerm);
+            });
+            const matchingRemainingGuests = remaining.filter(guest => {
+                return !remainingSearchTerm || guest.name.toLowerCase().includes(remainingSearchTerm) || guest.id.toLowerCase().includes(remainingSearchTerm);
             });
             const validatedContainer = document.getElementById('validatedGuests');
+            const remainingContainer = document.getElementById('remainingGuests');
             const activityContainer = document.getElementById('activity');
 
-            validatedContainer.innerHTML = matchingGuests.map(guest => `
+            validatedContainer.innerHTML = matchingValidatedGuests.map(guest => `
                 <div class="activity-item">
                     <div><b>${guest.name}</b><p class="small">${guest.id}</p></div>
                     <p>${new Date(guest.checkedAt).toLocaleString()}</p>
                 </div>
             `).join('') || '<p class="small">No validated guests match your search.</p>';
+
+            remainingContainer.innerHTML = matchingRemainingGuests.map(guest => `
+                <div class="activity-item">
+                    <div><b>${guest.name}</b><p class="small">${guest.id}</p></div>
+                    <p class="small">Not checked in</p>
+                </div>
+            `).join('') || '<p class="small">No remaining guests match your search.</p>';
 
             const activity = [...validated].sort((first, second) => new Date(second.checkedAt) - new Date(first.checkedAt));
             activityContainer.innerHTML = activity.map(guest => `
